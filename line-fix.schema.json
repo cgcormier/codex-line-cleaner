@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Codex line cleaner result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "results"
+  ],
+  "properties": {
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "changed",
+          "replacement"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "changed": {
+            "type": "boolean"
+          },
+          "replacement": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

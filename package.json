@@ -1,0 +1,83 @@
+{
+  "name": "codex-line-cleaner",
+  "displayName": "Codex Line Cleaner",
+  "description": "Clean completed editor lines with Codex after a short idle delay.",
+  "version": "0.0.1",
+  "publisher": "local",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "files": [
+    "extension.js",
+    "line-fix.schema.json",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:codexLineCleaner.toggle"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codexLineCleaner.toggle",
+        "title": "Codex Line Cleaner: Toggle"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "codexLineCleaner.toggle",
+        "key": "ctrl+shift+alt+c",
+        "when": "editorTextFocus"
+      }
+    ],
+    "configuration": {
+      "title": "Codex Line Cleaner",
+      "properties": {
+        "codexLineCleaner.codexPath": {
+          "type": "string",
+          "default": "codex",
+          "description": "Command or absolute path used to launch Codex."
+        },
+        "codexLineCleaner.model": {
+          "type": "string",
+          "default": "gpt-5.4-mini",
+          "description": "Codex model to use. Leave empty to use the Codex CLI default."
+        },
+        "codexLineCleaner.reasoningEffort": {
+          "type": "string",
+          "default": "low",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "description": "Reasoning effort passed to Codex."
+        },
+        "codexLineCleaner.additionalInstructions": {
+          "type": "string",
+          "default": "",
+          "description": "Extra instructions appended to the line-cleaning prompt."
+        },
+        "codexLineCleaner.idleDelayMs": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 1000,
+          "description": "Idle delay after edits before pending completed lines are sent to Codex."
+        },
+        "codexLineCleaner.timeoutMs": {
+          "type": "number",
+          "default": 60000,
+          "minimum": 5000,
+          "description": "Maximum time to wait for a Codex batch before rejecting it."
+        }
+      }
+    }
+  }
+}
