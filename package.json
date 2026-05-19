@@ -22,6 +22,9 @@
     "onCommand:codexLineCleaner.toggle"
   ],
   "main": "./extension.js",
+  "scripts": {
+    "test": "node --test"
+  },
   "contributes": {
     "commands": [
       {

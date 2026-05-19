@@ -510,5 +510,31 @@ function formatError(error) {
 
 module.exports = {
   activate,
-  deactivate
+  deactivate,
+  __test: {
+    state,
+    appendLimited,
+    applyValidatedResults,
+    buildCodexArgs,
+    buildPrompt,
+    captureCompletedLine,
+    countNewlineSequences,
+    getNearbyContext,
+    resetStateForTests,
+    validateBatchResponse
+  }
 };
+
+function resetStateForTests() {
+  clearIdleTimer();
+  stopCurrentCodexProcess();
+  state.enabled = false;
+  state.running = false;
+  state.pending.clear();
+  state.lastEditAt = 0;
+  state.nextId = 1;
+  state.currentProcess = undefined;
+  state.statusBar = undefined;
+  state.output = undefined;
+  state.context = undefined;
+}
