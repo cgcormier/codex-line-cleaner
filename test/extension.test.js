@@ -7,8 +7,12 @@ const test = require("node:test");
 
 const output = {
   lines: [],
+  shown: false,
   appendLine(message) {
     this.lines.push(message);
+  },
+  show() {
+    this.shown = true;
   },
   dispose() {}
 };
@@ -99,6 +103,7 @@ const { __test } = extension;
 test.beforeEach(() => {
   __test.resetStateForTests();
   output.lines = [];
+  output.shown = false;
   configValues = {};
   vscode.workspace.appliedEdits = [];
   vscode.workspace.rejectEdits = false;
@@ -237,6 +242,19 @@ test("captureCompletedLine records a nonblank line with nearby context", () => {
   );
 });
 
+test("takePendingBatch removes only the requested number of queued lines", () => {
+  const first = makeBatchItem({ id: "line-1", key: "one" });
+  const second = makeBatchItem({ id: "line-2", key: "two" });
+  const third = makeBatchItem({ id: "line-3", key: "three" });
+
+  __test.state.pending.set(first.key, first);
+  __test.state.pending.set(second.key, second);
+  __test.state.pending.set(third.key, third);
+
+  assert.deepEqual(__test.takePendingBatch(2), [first, second]);
+  assert.deepEqual(Array.from(__test.state.pending.values()), [third]);
+});
+
 test("applyValidatedResults edits an unchanged open document line", async () => {
   const document = createDocument(["bad grammer"]);
   vscode.workspace.textDocuments = [document];
@@ -277,6 +295,11 @@ test("applyValidatedResults skips a line that changed after capture", async () =
   assert.equal(document.lineAt(0).text, "user edit");
   assert.equal(vscode.workspace.appliedEdits.length, 0);
   assert.ok(output.lines.some((line) => line.includes("Skipped changed line: line-1")));
+});
+
+test("truncateForLog keeps short text intact and trims long text", () => {
+  assert.equal(__test.truncateForLog("short", 10), "short");
+  assert.equal(__test.truncateForLog("1234567890", 5), "12345...");
 });
 
 function mockConfig(values) {
