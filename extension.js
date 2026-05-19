@@ -9,6 +9,7 @@ const vscode = require("vscode");
 const EXTENSION_ID = "codexLineCleaner";
 const OUTPUT_NAME = "Codex Line Cleaner";
 const MAX_PROCESS_OUTPUT_CHARS = 20000;
+const DEFAULT_MAX_BATCH_SIZE = 8;
 
 const state = {
   enabled: false,
@@ -20,7 +21,9 @@ const state = {
   currentProcess: undefined,
   statusBar: undefined,
   output: undefined,
-  context: undefined
+  context: undefined,
+  lastError: undefined,
+  lastSummary: undefined
 };
 
 function activate(context) {
@@ -48,6 +51,8 @@ function deactivate() {
 
 function toggle() {
   state.enabled = !state.enabled;
+  state.lastError = undefined;
+  state.lastSummary = undefined;
 
   if (!state.enabled) {
     state.pending.clear();
@@ -149,14 +154,14 @@ async function flushPendingLines() {
     return;
   }
 
-  const batch = Array.from(state.pending.values());
-  for (const item of batch) {
-    state.pending.delete(item.key);
-  }
+  const batch = takePendingBatch(getMaxBatchSize());
 
   state.running = true;
+  state.lastError = undefined;
   updateStatusBar("running");
-  state.output.appendLine(`Sending ${batch.length} completed line(s) to Codex.`);
+  state.output.appendLine(
+    `Sending ${batch.length} completed line(s) to Codex. ${state.pending.size} line(s) remain queued.`
+  );
 
   try {
     const parsed = await runCodex(batch);
@@ -165,10 +170,14 @@ async function flushPendingLines() {
     }
 
     const results = validateBatchResponse(parsed, batch);
+    state.output.appendLine(`Codex returned ${parsed.results.length} result(s); ${results.length} safe replacement(s).`);
     const applied = await applyValidatedResults(results, batch);
+    state.lastSummary = `Last batch: applied ${applied} of ${batch.length} line(s).`;
     state.output.appendLine(`Applied ${applied} replacement(s).`);
   } catch (error) {
+    state.lastError = `Last Codex batch was rejected: ${formatError(error)}`;
     state.output.appendLine(`Rejected Codex batch: ${formatError(error)}`);
+    showOutputChannel();
     updateStatusBar("error");
   } finally {
     state.running = false;
@@ -178,6 +187,23 @@ async function flushPendingLines() {
       scheduleFlush();
     }
   }
+}
+
+function takePendingBatch(maxBatchSize) {
+  const batch = [];
+
+  for (const item of state.pending.values()) {
+    batch.push(item);
+    if (batch.length >= maxBatchSize) {
+      break;
+    }
+  }
+
+  for (const item of batch) {
+    state.pending.delete(item.key);
+  }
+
+  return batch;
 }
 
 async function runCodex(batch) {
@@ -192,7 +218,11 @@ async function runCodex(batch) {
   try {
     const raw = await spawnCodex(codexPath, args, prompt, getTimeoutMs());
     const output = await fs.readFile(outputFile, "utf8").catch(() => raw);
-    return JSON.parse(output);
+    try {
+      return JSON.parse(output);
+    } catch (error) {
+      throw new Error(`Codex returned invalid JSON: ${formatError(error)}. Output: ${truncateForLog(output)}`);
+    }
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
   }
@@ -265,7 +295,7 @@ function spawnCodex(command, args, prompt, timeoutMs) {
       if (state.currentProcess === child) {
         state.currentProcess = undefined;
       }
-      reject(error);
+      reject(new Error(`Failed to launch Codex command "${command}": ${formatError(error)}`));
     });
 
     child.on("close", (code) => {
@@ -439,6 +469,14 @@ function appendLimited(current, next) {
   return joined.slice(joined.length - MAX_PROCESS_OUTPUT_CHARS);
 }
 
+function truncateForLog(text, maxLength = 1000) {
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, maxLength)}...`;
+}
+
 function getConfig() {
   return vscode.workspace.getConfiguration(EXTENSION_ID);
 }
@@ -448,7 +486,11 @@ function getIdleDelayMs() {
 }
 
 function getTimeoutMs() {
-  return Math.max(5000, getConfig().get("timeoutMs", 60000));
+  return Math.max(5000, getConfig().get("timeoutMs", 120000));
+}
+
+function getMaxBatchSize() {
+  return Math.max(1, getConfig().get("maxBatchSize", DEFAULT_MAX_BATCH_SIZE));
 }
 
 function getWorkspaceCwd() {
@@ -474,6 +516,12 @@ function stopCurrentCodexProcess() {
   }
 }
 
+function showOutputChannel() {
+  if (state.output && typeof state.output.show === "function") {
+    state.output.show(true);
+  }
+}
+
 function updateStatusBar(mode) {
   if (!state.statusBar) {
     return;
@@ -491,9 +539,9 @@ function updateStatusBar(mode) {
     return;
   }
 
-  if (mode === "error") {
+  if (mode === "error" || state.lastError) {
     state.statusBar.text = "$(warning) Codex Clean";
-    state.statusBar.tooltip = "Last Codex line cleaner batch was rejected";
+    state.statusBar.tooltip = state.lastError || "Last Codex line cleaner batch was rejected";
     return;
   }
 
@@ -501,7 +549,7 @@ function updateStatusBar(mode) {
   state.statusBar.text = count > 0 ? `$(wand) Codex Clean ${count}` : "$(wand) Codex Clean";
   state.statusBar.tooltip = count > 0
     ? `${count} completed line(s) pending`
-    : "Codex line cleaning is on";
+    : state.lastSummary || "Codex line cleaning is on";
 }
 
 function formatError(error) {
@@ -521,6 +569,8 @@ module.exports = {
     countNewlineSequences,
     getNearbyContext,
     resetStateForTests,
+    takePendingBatch,
+    truncateForLog,
     validateBatchResponse
   }
 };
@@ -537,4 +587,6 @@ function resetStateForTests() {
   state.statusBar = undefined;
   state.output = undefined;
   state.context = undefined;
+  state.lastError = undefined;
+  state.lastSummary = undefined;
 }

@@ -76,9 +76,16 @@
         },
         "codexLineCleaner.timeoutMs": {
           "type": "number",
-          "default": 60000,
+          "default": 120000,
           "minimum": 5000,
           "description": "Maximum time to wait for a Codex batch before rejecting it."
+        },
+        "codexLineCleaner.maxBatchSize": {
+          "type": "number",
+          "default": 8,
+          "minimum": 1,
+          "maximum": 25,
+          "description": "Maximum number of completed lines to send to Codex in one batch."
         }
       }
     }
