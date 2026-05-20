@@ -2,6 +2,8 @@
 
 Local VS Code extension that watches completed editor lines while enabled, waits for a 5-second idle window, and asks Codex for safe single-line cleanups.
 
+Specialized and intended for notes within VS Code. Applicable to auto-fix typos in coding, uses immediate surrounding lines to build context. No more worrying about missing semicolons ';'   :)
+
 Toggle with `Ctrl+Shift+Alt+C`. The extension is disabled by default.
 
 The bundled Codex command uses low settings by default:
