@@ -5,6 +5,10 @@
   "version": "0.0.1",
   "publisher": "local",
   "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cgcormier/codex-line-cleaner.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
