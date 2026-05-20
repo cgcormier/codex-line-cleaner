@@ -19,7 +19,9 @@
   ],
   "activationEvents": [
     "onStartupFinished",
-    "onCommand:codexLineCleaner.toggle"
+    "onCommand:codexLineCleaner.toggle",
+    "onCommand:codexLineCleaner.cleanCurrentLine",
+    "onCommand:codexLineCleaner.runDiagnostics"
   ],
   "main": "./extension.js",
   "scripts": {
@@ -30,6 +32,14 @@
       {
         "command": "codexLineCleaner.toggle",
         "title": "Codex Line Cleaner: Toggle"
+      },
+      {
+        "command": "codexLineCleaner.cleanCurrentLine",
+        "title": "Codex Line Cleaner: Clean Current Line"
+      },
+      {
+        "command": "codexLineCleaner.runDiagnostics",
+        "title": "Codex Line Cleaner: Run Diagnostics"
       }
     ],
     "keybindings": [

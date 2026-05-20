@@ -1,6 +1,7 @@
 "use strict";
 
 const childProcess = require("child_process");
+const fsSync = require("fs");
 const fs = require("fs/promises");
 const os = require("os");
 const path = require("path");
@@ -38,6 +39,8 @@ function activate(context) {
     state.output,
     state.statusBar,
     vscode.commands.registerCommand(`${EXTENSION_ID}.toggle`, toggle),
+    vscode.commands.registerCommand(`${EXTENSION_ID}.cleanCurrentLine`, cleanCurrentLine),
+    vscode.commands.registerCommand(`${EXTENSION_ID}.runDiagnostics`, runDiagnostics),
     vscode.workspace.onDidChangeTextDocument(onDidChangeTextDocument)
   );
 
@@ -87,20 +90,30 @@ function onDidChangeTextDocument(event) {
 }
 
 function captureCompletedLine(document, lineNumber) {
-  if (lineNumber < 0 || lineNumber >= document.lineCount) {
+  const item = createCompletedLineItem(document, lineNumber);
+  if (!item) {
     return;
+  }
+
+  state.pending.set(item.key, item);
+  updateStatusBar();
+}
+
+function createCompletedLineItem(document, lineNumber) {
+  if (lineNumber < 0 || lineNumber >= document.lineCount) {
+    return undefined;
   }
 
   const originalText = document.lineAt(lineNumber).text;
   if (originalText.trim().length === 0) {
-    return;
+    return undefined;
   }
 
   const uri = document.uri.toString();
   const key = `${uri}:${lineNumber}`;
   const id = `line-${state.nextId++}`;
 
-  state.pending.set(key, {
+  return {
     id,
     key,
     uri,
@@ -109,9 +122,7 @@ function captureCompletedLine(document, lineNumber) {
     languageId: document.languageId,
     originalText,
     context: getNearbyContext(document, lineNumber)
-  });
-
-  updateStatusBar();
+  };
 }
 
 function getNearbyContext(document, lineNumber) {
@@ -189,6 +200,127 @@ async function flushPendingLines() {
   }
 }
 
+async function cleanCurrentLine() {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    showWarningMessage("Codex Line Cleaner: no active editor.");
+    return;
+  }
+
+  if (state.running) {
+    showWarningMessage("Codex Line Cleaner is already checking a line.");
+    return;
+  }
+
+  const lineNumber = findManualCleanLineNumber(editor.document, editor.selection.active.line);
+  const item = createCompletedLineItem(editor.document, lineNumber);
+  if (!item) {
+    showWarningMessage("Codex Line Cleaner: current line is blank.");
+    return;
+  }
+
+  state.running = true;
+  state.lastError = undefined;
+  updateStatusBar("running");
+  state.output.appendLine(`Cleaning current line ${item.lineNumber + 1} with Codex.`);
+
+  try {
+    const parsed = await runCodex([item]);
+    const results = validateBatchResponse(parsed, [item]);
+    state.output.appendLine(`Codex returned ${parsed.results.length} result(s); ${results.length} safe replacement(s).`);
+    const applied = await applyValidatedResults(results);
+    state.lastSummary = `Manual clean: applied ${applied} of 1 line.`;
+    state.output.appendLine(`Manual clean applied ${applied} replacement(s).`);
+    if (applied === 0) {
+      showOutputChannel();
+    }
+  } catch (error) {
+    state.lastError = `Manual clean failed: ${formatError(error)}`;
+    state.output.appendLine(state.lastError);
+    showOutputChannel();
+    showErrorMessage("Codex Line Cleaner manual clean failed. See the Codex Line Cleaner output.");
+  } finally {
+    state.running = false;
+    updateStatusBar();
+  }
+}
+
+function findManualCleanLineNumber(document, lineNumber) {
+  if (lineNumber < 0 || lineNumber >= document.lineCount) {
+    return lineNumber;
+  }
+
+  if (document.lineAt(lineNumber).text.trim().length > 0) {
+    return lineNumber;
+  }
+
+  const previousLine = lineNumber - 1;
+  if (previousLine >= 0 && document.lineAt(previousLine).text.trim().length > 0) {
+    return previousLine;
+  }
+
+  return lineNumber;
+}
+
+async function runDiagnostics() {
+  showOutputChannel();
+  state.lastError = undefined;
+  state.output.appendLine("");
+  state.output.appendLine(`[${new Date().toISOString()}] Running Codex Line Cleaner diagnostics.`);
+
+  const config = getConfig();
+  const codexPathSetting = config.get("codexPath", "codex");
+  const codexPath = resolveCodexCommand(codexPathSetting);
+  state.output.appendLine(`Codex path setting: ${codexPathSetting}`);
+  state.output.appendLine(`Resolved Codex command: ${codexPath}`);
+  state.output.appendLine(`Workspace cwd: ${getWorkspaceCwd()}`);
+  state.output.appendLine(`Extension path: ${state.context && state.context.extensionPath ? state.context.extensionPath : "(unknown)"}`);
+  state.output.appendLine(`PATH entries: ${String(process.env.PATH || "").split(path.delimiter).filter(Boolean).length}`);
+
+  try {
+    const version = await spawnCodex(codexPath, ["--version"], "", 15000);
+    state.output.appendLine(`Codex version: ${version.trim() || "(empty output)"}`);
+  } catch (error) {
+    state.lastError = `Diagnostics failed while launching Codex: ${formatError(error)}`;
+    state.output.appendLine(state.lastError);
+    showErrorMessage("Codex Line Cleaner diagnostics failed while launching Codex.");
+    updateStatusBar("error");
+    return;
+  }
+
+  const item = {
+    id: "diagnostic-line",
+    key: "diagnostic://codex-line-cleaner:0",
+    uri: "diagnostic://codex-line-cleaner",
+    filePath: "diagnostic",
+    lineNumber: 0,
+    languageId: "markdown",
+    originalText: "teh value",
+    context: [
+      {
+        lineNumber: 1,
+        isPendingLine: true,
+        text: "teh value"
+      }
+    ]
+  };
+
+  try {
+    const parsed = await runCodex([item]);
+    state.output.appendLine(`Diagnostic Codex response: ${JSON.stringify(parsed)}`);
+    const results = validateBatchResponse(parsed, [item]);
+    state.output.appendLine(`Diagnostic safe replacements: ${results.length}`);
+    state.lastSummary = "Diagnostics passed.";
+    updateStatusBar();
+    showInformationMessage("Codex Line Cleaner diagnostics passed. See output for details.");
+  } catch (error) {
+    state.lastError = `Diagnostics failed while calling Codex: ${formatError(error)}`;
+    state.output.appendLine(state.lastError);
+    showErrorMessage("Codex Line Cleaner diagnostics failed while calling Codex.");
+    updateStatusBar("error");
+  }
+}
+
 function takePendingBatch(maxBatchSize) {
   const batch = [];
 
@@ -208,7 +340,7 @@ function takePendingBatch(maxBatchSize) {
 
 async function runCodex(batch) {
   const config = getConfig();
-  const codexPath = config.get("codexPath", "codex");
+  const codexPath = resolveCodexCommand(config.get("codexPath", "codex"));
   const schemaPath = state.context.asAbsolutePath("line-fix.schema.json");
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-line-cleaner-"));
   const outputFile = path.join(tempDir, "result.json");
@@ -261,6 +393,61 @@ function buildCodexArgs(config, schemaPath, outputFile) {
   );
 
   return args;
+}
+
+function resolveCodexCommand(configuredPath) {
+  const command = String(configuredPath || "codex").trim() || "codex";
+  if (!isDefaultCodexCommand(command)) {
+    return command;
+  }
+
+  return findBundledCodexCommand() || command;
+}
+
+function isDefaultCodexCommand(command) {
+  const lower = command.toLowerCase();
+  return lower === "codex" || lower === "codex.exe";
+}
+
+function findBundledCodexCommand() {
+  if (process.platform !== "win32") {
+    return undefined;
+  }
+
+  const extensionRoots = [
+    path.join(os.homedir(), ".vscode", "extensions"),
+    path.join(os.homedir(), ".vscode-insiders", "extensions")
+  ];
+  const candidates = [];
+
+  for (const root of extensionRoots) {
+    if (!fsSync.existsSync(root)) {
+      continue;
+    }
+
+    for (const entry of fsSync.readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !entry.name.startsWith("openai.chatgpt-")) {
+        continue;
+      }
+
+      const codexPath = path.join(root, entry.name, "bin", "windows-x86_64", "codex.exe");
+      if (fsSync.existsSync(codexPath)) {
+        candidates.push(codexPath);
+      }
+    }
+  }
+
+  candidates.sort((left, right) => {
+    try {
+      const leftTime = fsSync.statSync(left).mtimeMs;
+      const rightTime = fsSync.statSync(right).mtimeMs;
+      return rightTime - leftTime;
+    } catch {
+      return 0;
+    }
+  });
+
+  return candidates[0];
 }
 
 function spawnCodex(command, args, prompt, timeoutMs) {
@@ -398,8 +585,13 @@ function validateBatchResponse(parsed, batch) {
       continue;
     }
 
-    if (!result.changed || result.replacement === item.originalText) {
+    if (result.replacement === item.originalText) {
+      state.output.appendLine(`Unchanged result: ${item.id}`);
       continue;
+    }
+
+    if (!result.changed) {
+      state.output.appendLine(`Accepted differing replacement despite changed=false: ${item.id}`);
     }
 
     if (result.replacement.trim().length === 0) {
@@ -522,6 +714,24 @@ function showOutputChannel() {
   }
 }
 
+function showInformationMessage(message) {
+  if (vscode.window.showInformationMessage) {
+    vscode.window.showInformationMessage(message);
+  }
+}
+
+function showWarningMessage(message) {
+  if (vscode.window.showWarningMessage) {
+    vscode.window.showWarningMessage(message);
+  }
+}
+
+function showErrorMessage(message) {
+  if (vscode.window.showErrorMessage) {
+    vscode.window.showErrorMessage(message);
+  }
+}
+
 function updateStatusBar(mode) {
   if (!state.statusBar) {
     return;
@@ -566,7 +776,11 @@ module.exports = {
     buildCodexArgs,
     buildPrompt,
     captureCompletedLine,
+    createCompletedLineItem,
     countNewlineSequences,
+    findManualCleanLineNumber,
+    isDefaultCodexCommand,
+    resolveCodexCommand,
     getNearbyContext,
     resetStateForTests,
     takePendingBatch,

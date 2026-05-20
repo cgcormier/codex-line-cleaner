@@ -24,6 +24,10 @@ const vscode = {
     Right: 100
   },
   window: {
+    activeTextEditor: undefined,
+    informationMessages: [],
+    warningMessages: [],
+    errorMessages: [],
     createOutputChannel() {
       return output;
     },
@@ -35,6 +39,15 @@ const vscode = {
         show() {},
         dispose() {}
       };
+    },
+    showInformationMessage(message) {
+      this.informationMessages.push(message);
+    },
+    showWarningMessage(message) {
+      this.warningMessages.push(message);
+    },
+    showErrorMessage(message) {
+      this.errorMessages.push(message);
     }
   },
   commands: {
@@ -108,6 +121,10 @@ test.beforeEach(() => {
   vscode.workspace.appliedEdits = [];
   vscode.workspace.rejectEdits = false;
   vscode.workspace.textDocuments = [];
+  vscode.window.activeTextEditor = undefined;
+  vscode.window.informationMessages = [];
+  vscode.window.warningMessages = [];
+  vscode.window.errorMessages = [];
 });
 
 test("countNewlineSequences handles common newline variants", () => {
@@ -151,6 +168,13 @@ test("buildCodexArgs omits blank optional settings", () => {
   assert.equal(args.includes("-c"), false);
 });
 
+test("resolveCodexCommand preserves explicit command overrides", () => {
+  assert.equal(__test.isDefaultCodexCommand("codex"), true);
+  assert.equal(__test.isDefaultCodexCommand("codex.exe"), true);
+  assert.equal(__test.isDefaultCodexCommand("C:\\tools\\codex.exe"), false);
+  assert.equal(__test.resolveCodexCommand("C:\\tools\\codex.exe"), "C:\\tools\\codex.exe");
+});
+
 test("buildPrompt serializes batch input and extra instructions", () => {
   const prompt = __test.buildPrompt(
     [
@@ -187,7 +211,8 @@ test("validateBatchResponse accepts only safe single-line replacements", () => {
   const multiline = makeBatchItem({ id: "line-4", originalText: "mess" });
   const same = makeBatchItem({ id: "line-5", originalText: "same" });
   const invalid = makeBatchItem({ id: "line-6", originalText: "bad" });
-  const batch = [accepted, unchanged, blank, multiline, same, invalid];
+  const changedFalse = makeBatchItem({ id: "line-7", originalText: "teh thing" });
+  const batch = [accepted, unchanged, blank, multiline, same, invalid, changedFalse];
 
   const results = __test.validateBatchResponse(
     {
@@ -198,6 +223,7 @@ test("validateBatchResponse accepts only safe single-line replacements", () => {
         { id: "line-4", changed: true, replacement: "first\nsecond" },
         { id: "line-5", changed: true, replacement: "same" },
         { id: "line-6", changed: "yes", replacement: "better" },
+        { id: "line-7", changed: false, replacement: "the thing" },
         { id: "missing", changed: true, replacement: "ignored" },
         null
       ]
@@ -205,10 +231,14 @@ test("validateBatchResponse accepts only safe single-line replacements", () => {
     batch
   );
 
-  assert.deepEqual(results, [{ item: accepted, replacement: "the value" }]);
+  assert.deepEqual(results, [
+    { item: accepted, replacement: "the value" },
+    { item: changedFalse, replacement: "the thing" }
+  ]);
   assert.ok(output.lines.some((line) => line.includes("Skipped blank replacement: line-3")));
   assert.ok(output.lines.some((line) => line.includes("Skipped multiline replacement: line-4")));
   assert.ok(output.lines.some((line) => line.includes("Skipped result with invalid fields: line-6")));
+  assert.ok(output.lines.some((line) => line.includes("Accepted differing replacement despite changed=false: line-7")));
   assert.ok(output.lines.some((line) => line.includes("Skipped result with unknown id: missing")));
   assert.ok(output.lines.some((line) => line.includes("Skipped malformed result.")));
 });
@@ -255,6 +285,13 @@ test("takePendingBatch removes only the requested number of queued lines", () =>
   assert.deepEqual(Array.from(__test.state.pending.values()), [third]);
 });
 
+test("findManualCleanLineNumber uses the previous line when the current line is blank", () => {
+  const document = createDocument(["needs clean", ""]);
+
+  assert.equal(__test.findManualCleanLineNumber(document, 0), 0);
+  assert.equal(__test.findManualCleanLineNumber(document, 1), 0);
+});
+
 test("applyValidatedResults edits an unchanged open document line", async () => {
   const document = createDocument(["bad grammer"]);
   vscode.workspace.textDocuments = [document];
@@ -273,6 +310,43 @@ test("applyValidatedResults edits an unchanged open document line", async () => 
   assert.equal(applied, 1);
   assert.equal(document.lineAt(0).text, "bad grammar");
   assert.equal(vscode.workspace.appliedEdits.length, 1);
+});
+
+test("validate and apply a realistic prose correction", async () => {
+  __test.state.output = output;
+  const originalText = "Teh grammer in this setnence should be fixed.";
+  const replacement = "The grammar in this sentence should be fixed.";
+  const document = createDocument([originalText], {
+    fsPath: "C:\\workspace\\notes.md",
+    languageId: "markdown",
+    uriString: "file:///workspace/notes.md"
+  });
+  const item = makeBatchItem({
+    filePath: document.uri.fsPath,
+    languageId: document.languageId,
+    originalText,
+    uri: document.uri.toString()
+  });
+
+  vscode.workspace.textDocuments = [document];
+
+  const results = __test.validateBatchResponse(
+    {
+      results: [
+        {
+          id: item.id,
+          changed: true,
+          replacement
+        }
+      ]
+    },
+    [item]
+  );
+  const applied = await __test.applyValidatedResults(results);
+
+  assert.deepEqual(results, [{ item, replacement }]);
+  assert.equal(applied, 1);
+  assert.equal(document.lineAt(0).text, replacement);
 });
 
 test("applyValidatedResults skips a line that changed after capture", async () => {
