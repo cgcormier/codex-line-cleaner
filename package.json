@@ -4,7 +4,7 @@
   "description": "Clean completed editor lines with Codex after a short idle delay.",
   "version": "0.0.1",
   "publisher": "local",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/cgcormier/codex-line-cleaner.git"
@@ -19,7 +19,8 @@
     "extension.js",
     "line-fix.schema.json",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "activationEvents": [
     "onStartupFinished",
